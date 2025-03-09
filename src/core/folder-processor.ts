@@ -1,25 +1,23 @@
-import { join, dirname, extname, basename } from "https://deno.land/std/path/mod.ts";
-import { exists } from "https://deno.land/std/fs/mod.ts";
 import { format } from "https://deno.land/std/datetime/mod.ts";
-import { 
-  ConversionTask, 
-  FolderConversionTask, 
-  ProgressInfo 
+import { exists } from "https://deno.land/std/fs/mod.ts";
+import { basename, extname, join } from "https://deno.land/std/path/mod.ts";
+import {
+  FolderConversionTask,
+  ProgressInfo
 } from "../interfaces/types.ts";
-import { 
-  writeErrorLog, 
-  showProgress 
-} from "../utils/helpers.ts";
-import { 
-  DATE_FORMAT, 
-  MAX_CONCURRENT_TASKS, 
-  MAX_RETRY_COUNT, 
-  SKIP_EXISTING_FILES, 
-  SHOW_CONVERSION_LOGS 
+import {
+  DATE_FORMAT,
+  MAX_RETRY_COUNT,
+  SHOW_CONVERSION_LOGS,
+  SKIP_EXISTING_FILES
 } from "../utils/constants.ts";
+import {
+  showProgress,
+  writeErrorLog
+} from "../utils/helpers.ts";
 import { convertFile } from "./converter.ts";
 
-// Process all files within a single folder
+// Process all files within a single folder sequentially
 export async function processFilesInFolder(
   folderTask: FolderConversionTask,
   globalProgress: ProgressInfo
@@ -44,51 +42,47 @@ export async function processFilesInFolder(
     task.originalIndex = index;
   });
   
-  console.log(`Starting conversion of ${files.length} files in ${folderPath}`);
+  console.log(`Starting sequential conversion of ${files.length} files in ${folderPath}`);
   
   let successCount = 0;
   let errorCount = 0;
   let skippedCount = 0;
   
-  // Process files concurrently within the folder
-  for (let i = 0; i < files.length; i += MAX_CONCURRENT_TASKS) {
-    const batch = files.slice(i, i + MAX_CONCURRENT_TASKS);
-    const promises = batch.map(async (task) => {
-      try {
-        // Check if file already exists
-        const targetFileName = `${(task.originalIndex + 1).toString().padStart(3, '0')}.avif`;
-        const finalOutputPath = join(task.outputPath, targetFileName);
-        
-        if (SKIP_EXISTING_FILES && await exists(finalOutputPath)) {
-          if (SHOW_CONVERSION_LOGS) {
-            console.log(`Skipping existing file: ${finalOutputPath}`);
-          }
-          skippedCount++;
-        } else {
-          await convertFile(task);
-          successCount++;
-        }
-      } catch (error: unknown) {
-        errorCount++;
-        folderTask.errorFiles.push(task); // Add to error files for retry
-        
-        console.error(`\nError processing file: ${task.inputPath}`);
-        const errorMessage = error instanceof Error ? error.message : String(error);
-        console.error(`Error message: ${errorMessage}`);
-        
-        await writeErrorLog({
-          timestamp: format(new Date(), DATE_FORMAT),
-          filePath: task.inputPath,
-          error: errorMessage
-        });
-      }
+  // Process files sequentially within the folder
+  for (let i = 0; i < files.length; i++) {
+    const task = files[i];
+    try {
+      // Check if file already exists
+      const targetFileName = `${(task.originalIndex + 1).toString().padStart(3, '0')}.avif`;
+      const finalOutputPath = join(task.outputPath, targetFileName);
       
-      // Update global progress
-      globalProgress.current++;
-      await showProgress(globalProgress);
-    });
+      if (SKIP_EXISTING_FILES && await exists(finalOutputPath)) {
+        if (SHOW_CONVERSION_LOGS) {
+          console.log(`Skipping existing file: ${finalOutputPath}`);
+        }
+        skippedCount++;
+      } else {
+        await convertFile(task);
+        successCount++;
+      }
+    } catch (error: unknown) {
+      errorCount++;
+      folderTask.errorFiles.push(task); // Add to error files for retry
+      
+      console.error(`\nError processing file: ${task.inputPath}`);
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      console.error(`Error message: ${errorMessage}`);
+      
+      await writeErrorLog({
+        timestamp: format(new Date(), DATE_FORMAT),
+        filePath: task.inputPath,
+        error: errorMessage
+      });
+    }
     
-    await Promise.all(promises);
+    // Update global progress
+    globalProgress.current++;
+    await showProgress(globalProgress);
   }
   
   return { successCount, errorCount, skippedCount };

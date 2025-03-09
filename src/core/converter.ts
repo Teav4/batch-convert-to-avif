@@ -1,24 +1,15 @@
-import { join, dirname, basename, extname } from "https://deno.land/std/path/mod.ts";
 import { exists, move } from "https://deno.land/std/fs/mod.ts";
-import { format } from "https://deno.land/std/datetime/mod.ts";
+import { basename, extname, join } from "https://deno.land/std/path/mod.ts";
 import { ConversionTask } from "../interfaces/types.ts";
-import { 
-  generateRandomId, 
-  writeErrorLog, 
-  ensureTempDir 
-} from "../utils/helpers.ts";
-import { 
-  TEMP_DIR, 
-  DATE_FORMAT,
-  SHOW_CONVERSION_LOGS, 
-  SHOW_COMMAND_LOGS 
+import {
+  SHOW_COMMAND_LOGS,
+  SHOW_CONVERSION_LOGS,
+  TEMP_DIR
 } from "../utils/constants.ts";
-
-// Helper function to escape special characters in file paths
-function escapeFilePath(path: string): string {
-  // Double quote the entire path to handle spaces and special characters
-  return `"${path.replace(/"/g, '\\"')}"`;
-}
+import {
+  ensureTempDir,
+  generateRandomId
+} from "../utils/helpers.ts";
 
 // Copy a file to temp directory with a simpler name
 async function copyToTemp(sourcePath: string, tempDir: string): Promise<string> {

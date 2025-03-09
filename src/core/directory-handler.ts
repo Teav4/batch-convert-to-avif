@@ -1,30 +1,34 @@
-import { join, dirname, basename, extname, relative } from "https://deno.land/std/path/mod.ts";
-import { walk } from "https://deno.land/std/fs/walk.ts";
 import { format } from "https://deno.land/std/datetime/mod.ts";
-import { 
-  DirectoryMismatch,
-  RenameError,
-  FolderConversionTask
+import { walk } from "https://deno.land/std/fs/walk.ts";
+import { basename, dirname, extname, join, relative } from "https://deno.land/std/path/mod.ts";
+import {
+  DirectoryMismatch
 } from "../interfaces/types.ts";
+import {
+  CHECK_ERRORS_LOG_FILE,
+  DATE_FORMAT,
+  SHOW_RENAME_LOGS,
+  SUPPORTED_EXTENSIONS
+} from "../utils/constants.ts";
 import {
   sanitizePath,
   writeRenameErrorLog
 } from "../utils/helpers.ts";
-import {
-  SUPPORTED_EXTENSIONS,
-  SHOW_RENAME_LOGS,
-  CHECK_ERRORS_LOG_FILE,
-  DATE_FORMAT
-} from "../utils/constants.ts";
 
 // Rename folders with special characters to sanitized names
 export async function renameSpecialCharFolders(sourceDir: string): Promise<void> {
   const dirs = [];
   // Collect all directories first
-  for await (const entry of walk(sourceDir, { includeDirs: true })) {
-    if (entry.isDirectory) {
-      dirs.push(entry);
+  try {
+    for await (const entry of walk(sourceDir, { includeDirs: true })) {
+      if (entry.isDirectory) {
+        dirs.push(entry);
+      }
     }
+  } catch (error: unknown) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    console.error(`Error walking source directory tree: ${errorMessage}`);
+    console.log("Will continue without complete folder renaming.");
   }
 
   // Sort directories by depth (deepest first)
@@ -34,37 +38,151 @@ export async function renameSpecialCharFolders(sourceDir: string): Promise<void>
     return depthB - depthA;
   });
 
+  // Track renamed directories to avoid repeat attempts
+  const renamedPaths = new Set<string>();
+  // Track used target names to avoid duplicates
+  const usedNames = new Map<string, number>();
+  
+  let skippedCount = 0;
+  let errorCount = 0;
+  let successCount = 0;
+
   // Process directories
   for (const entry of dirs) {
+    // Skip already processed paths or if parent has been renamed
+    if (renamedPaths.has(dirname(entry.path))) {
+      skippedCount++;
+      continue;
+    }
+
     const dirName = basename(entry.path);
     const parentDir = dirname(entry.path);
-    const sanitizedName = sanitizePath(dirName);
+    let sanitizedName = sanitizePath(dirName);
     
     if (dirName !== sanitizedName) {
+      // Check if this sanitized name already exists in the same parent directory
+      const parentDirKey = parentDir.toLowerCase();
+      const sanitizedNameKey = sanitizedName.toLowerCase();
+      const dupKey = `${parentDirKey}|${sanitizedNameKey}`;
+      
+      // If this sanitized name was already used in this directory, add a number suffix
+      if (usedNames.has(dupKey)) {
+        const counter = usedNames.get(dupKey)! + 1;
+        usedNames.set(dupKey, counter);
+        sanitizedName = `${sanitizedName}_${counter}`;
+      } else {
+        usedNames.set(dupKey, 0);
+      }
+      
       const newPath = join(parentDir, sanitizedName);
       if (SHOW_RENAME_LOGS) {
         console.log(`Renaming directory:\nFrom: ${entry.path}\nTo: ${newPath}\n`);
       }
       
       try {
+        // Check if destination already exists to avoid conflicts
+        try {
+          const destStat = await Deno.stat(newPath);
+          if (destStat.isDirectory) {
+            console.log(`Destination directory ${newPath} already exists, creating a numbered alternative.`);
+            
+            // Find an available numbered alternative
+            let counter = 1;
+            let alternateNewPath;
+            
+            do {
+              const numberedName = `${sanitizedName}_${counter}`;
+              alternateNewPath = join(parentDir, numberedName);
+              counter++;
+              
+              try {
+                await Deno.stat(alternateNewPath);
+                // Path exists, try next number
+              } catch {
+                // Path doesn't exist, we can use it
+                break;
+              }
+            } while (counter < 100); // Safety limit
+            
+            console.log(`Using alternative name: ${alternateNewPath}`);
+            await Deno.rename(entry.path, alternateNewPath);
+            renamedPaths.add(entry.path);
+            successCount++;
+            continue;
+          }
+        } catch {
+          // Destination doesn't exist, can proceed with original rename
+        }
+        
         await Deno.rename(entry.path, newPath);
+        renamedPaths.add(entry.path);
+        successCount++;
       } catch (error: unknown) {
+        errorCount++;
         const errorMessage = error instanceof Error ? error.message : String(error);
         console.error(`Error renaming directory ${entry.path}: ${errorMessage}`);
-        await writeRenameErrorLog({
-          timestamp: format(new Date(), DATE_FORMAT),
-          oldPath: entry.path,
-          newPath: newPath,
-          error: errorMessage
-        });
+        
+        // Thử lại với tên thay thế và thêm số
+        try {
+          console.log(`Trying alternate rename method for ${entry.path}...`);
+          
+          // Tìm một số hậu tố chưa được sử dụng
+          let counter = 1;
+          let alternateNewPath;
+          
+          do {
+            const numberedName = `${sanitizedName}_${counter}`;
+            alternateNewPath = join(parentDir, numberedName);
+            counter++;
+            
+            try {
+              await Deno.stat(alternateNewPath);
+              // Đường dẫn đã tồn tại, thử số tiếp theo
+            } catch {
+              // Đường dẫn chưa tồn tại, có thể sử dụng
+              break;
+            }
+          } while (counter < 100); // Giới hạn an toàn
+          
+          await Deno.rename(entry.path, alternateNewPath);
+          console.log(`Successfully renamed to numbered path: ${alternateNewPath}`);
+          renamedPaths.add(entry.path);
+          
+          // Ghi nhớ lỗi ban đầu để tham khảo
+          await writeRenameErrorLog({
+            timestamp: format(new Date(), DATE_FORMAT),
+            oldPath: entry.path,
+            newPath: alternateNewPath,
+            error: `Original rename failed (${errorMessage}). Used numbered alternative.`
+          });
+        } catch (altError: unknown) {
+          const altErrorMessage = altError instanceof Error ? altError.message : String(altError);
+          console.error(`Alternate rename also failed: ${altErrorMessage}`);
+          
+          // Ghi log cả hai lỗi
+          await writeRenameErrorLog({
+            timestamp: format(new Date(), DATE_FORMAT),
+            oldPath: entry.path,
+            newPath: newPath,
+            error: `Original error: ${errorMessage}. Alternate method also failed: ${altErrorMessage}`
+          });
+        }
       }
     }
   }
+
+  console.log(`Directory rename summary: ${successCount} renamed, ${errorCount} failed, ${skippedCount} skipped.`);
 }
 
 // Verify conversion completion by comparing source and target directories
 export async function checkDirectoryCompletion(sourceDir: string, targetDir: string): Promise<void> {
   console.log("\nVerifying conversion completeness...");
+  
+  // Lấy tên folder từ đường dẫn nguồn
+  const folderName = basename(sourceDir);
+  const checkErrorsFileName = `check_errors_${folderName}.txt`;
+  
+  console.log(`Log file will be saved as: ${checkErrorsFileName}`);
   
   const MAX_CHECK_RETRIES = 2;
   let successful = false;
@@ -160,77 +278,9 @@ export async function checkDirectoryCompletion(sourceDir: string, targetDir: str
       logContent += `Missing: ${mismatch.difference} files\n\n`;
     }
     
-    await Deno.writeTextFile(CHECK_ERRORS_LOG_FILE, logContent);
-    console.log(`Found ${mismatches.length} directories with mismatched file counts. Check ${CHECK_ERRORS_LOG_FILE} for details.`);
+    await Deno.writeTextFile(checkErrorsFileName, logContent);
+    console.log(`Found ${mismatches.length} directories with mismatched file counts. Check ${checkErrorsFileName} for details.`);
   } else {
     console.log("All directories verified. File counts match between source and target.");
-  }
-}
-
-// Check if a folder has been completely processed with retries
-export async function checkFolderCompletion(folderTask: FolderConversionTask, sourceDir: string): Promise<boolean> {
-  const { folderPath, files } = folderTask;
-  
-  // Create relative path from source to target directory
-  const relativePath = relative(sourceDir, folderPath);
-  const targetFolderPath = join(sourceDir + "_avif", relativePath);
-  
-  console.log(`\nVerifying folder completion: ${folderPath}`);
-  
-  // Count source files in this folder
-  const sourceCount = files.length;
-  
-  // Add retry logic - maximum 2 retries
-  let targetCount = 0;
-  let success = false;
-  let lastError = "";
-  const MAX_FOLDER_CHECK_RETRIES = 2;
-  
-  for (let attempt = 0; attempt <= MAX_FOLDER_CHECK_RETRIES; attempt++) {
-    try {
-      if (attempt > 0) {
-        console.log(`Retry folder verification attempt ${attempt}/${MAX_FOLDER_CHECK_RETRIES}`);
-        // Add a small delay before retrying
-        await new Promise(resolve => setTimeout(resolve, 1000));
-      }
-      
-      targetCount = 0;
-      // Count target files
-      for await (const entry of Deno.readDir(targetFolderPath)) {
-        if (entry.isFile && extname(entry.name).toLowerCase() === ".avif") {
-          targetCount++;
-        }
-      }
-      success = true;
-      break; // Successfully read the directory, exit retry loop
-      
-    } catch (error: unknown) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      lastError = errorMessage;
-      
-      if (attempt < MAX_FOLDER_CHECK_RETRIES) {
-        console.warn(`Error reading target folder on attempt ${attempt + 1}. Will retry...`);
-        console.warn(`Error: ${errorMessage}`);
-      } else {
-        // Final attempt failed
-        console.error(`Error reading target folder ${targetFolderPath} after ${MAX_FOLDER_CHECK_RETRIES + 1} attempts: ${errorMessage}`);
-      }
-    }
-  }
-  
-  if (!success) {
-    console.error(`Failed to verify folder ${targetFolderPath} after all retry attempts`);
-    return false;
-  }
-  
-  // Log results
-  console.log(`Source files: ${sourceCount}, Target files: ${targetCount}`);
-  
-  if (sourceCount !== targetCount) {
-    console.log(`⚠️ MISMATCH! Folder ${folderPath} has ${sourceCount} source files but ${targetCount} target files`);
-    return false;
-  } else {
-    console.log(`✅ Folder ${folderPath} completed successfully: ${targetCount}/${sourceCount} files converted`);
-    return true;
   }
 }

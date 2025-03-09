@@ -1,13 +1,13 @@
 import { parse } from "https://deno.land/std/flags/mod.ts";
 import { convertToAvif } from "./core/controller.ts";
-import { setMaxConcurrentTasks } from "./utils/constants.ts";
+import { setMaxConcurrentWorkers } from "./utils/constants.ts";
 
 if (import.meta.main) {
   const args = parse(Deno.args);
   const sourceDir = args._[0] as string;
   
   if (args.workers) {
-    setMaxConcurrentTasks(parseInt(args.workers));
+    setMaxConcurrentWorkers(parseInt(args.workers));
   }
 
   if (!sourceDir) {

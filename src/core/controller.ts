@@ -1,24 +1,22 @@
-import { join, dirname, basename, extname, relative } from "https://deno.land/std/path/mod.ts";
-import { ensureDir, exists } from "https://deno.land/std/fs/mod.ts";
+import { ensureDir } from "https://deno.land/std/fs/mod.ts";
 import { walk } from "https://deno.land/std/fs/walk.ts";
-import { format } from "https://deno.land/std/datetime/mod.ts";
+import { basename, dirname, extname, join, relative } from "https://deno.land/std/path/mod.ts";
 import { ConversionTask, ProgressInfo } from "../interfaces/types.ts";
-import { 
-  formatDuration, 
-  sanitizePath, 
-  ensureTempDir,
-  showProgress 
-} from "../utils/helpers.ts";
-import { 
-  SUPPORTED_EXTENSIONS, 
+import {
+  MAX_CONCURRENT_WORKERS,
   SHOW_CONVERSION_LOGS,
-  MAX_CONCURRENT_TASKS, 
-  TEMP_DIR 
+  SUPPORTED_EXTENSIONS,
+  TEMP_DIR
 } from "../utils/constants.ts";
+import {
+  ensureTempDir,
+  formatDuration,
+  sanitizePath
+} from "../utils/helpers.ts";
 import { processFilesByFolder } from "./batch-processor.ts";
-import { 
-  renameSpecialCharFolders, 
-  checkDirectoryCompletion 
+import {
+  checkDirectoryCompletion,
+  renameSpecialCharFolders
 } from "./directory-handler.ts";
 
 // Main function to convert all images in a directory to AVIF
@@ -35,8 +33,14 @@ export async function convertToAvif(sourceDir: string): Promise<void> {
   }
 
   console.log("Renaming folders with special characters...");
-  await renameSpecialCharFolders(sourceDir);
-  console.log("Folder renaming completed.\n");
+  try {
+    await renameSpecialCharFolders(sourceDir);
+    console.log("Folder renaming completed.\n");
+  } catch (error: unknown) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    console.error(`Error during folder renaming process: ${errorMessage}`);
+    console.log("Continuing with conversion regardless of renaming errors.\n");
+  }
 
   // Create temp directory for temporary files
   await ensureTempDir();
@@ -50,24 +54,50 @@ export async function convertToAvif(sourceDir: string): Promise<void> {
   console.log("Finding image files...");
   for await (const entry of walk(sourceDir)) {
     if (entry.isFile && SUPPORTED_EXTENSIONS.includes(extname(entry.path).toLowerCase())) {
-      const relativePath = relative(sourceDir, entry.path);
-      const pathParts = dirname(relativePath).split(/[\/\\]/);
-      const sanitizedParts = pathParts.map(part => sanitizePath(part));
-      const sanitizedPath = sanitizedParts.join("/");
-      const targetPath = join(targetDir, sanitizedPath);
-      
-      await ensureDir(targetPath);
+      try {
+        const relativePath = relative(sourceDir, entry.path);
+        const pathParts = dirname(relativePath).split(/[\/\\]/);
+        const sanitizedParts = pathParts.map(part => sanitizePath(part));
+        const sanitizedPath = sanitizedParts.join("/");
+        const targetPath = join(targetDir, sanitizedPath);
+        
+        // Ensure target directory exists
+        try {
+          await ensureDir(targetPath);
+        } catch (err: unknown) {
+          const dirError = err instanceof Error ? err.message : String(err);
+          console.error(`Error creating directory ${targetPath}: ${dirError}`);
+          console.log(`Attempting alternative approach for ${targetPath}...`);
+          
+          // Try creating directories one by one if batch creation failed
+          const parts = targetPath.split(/[\/\\]/);
+          let currentPath = "";
+          for (const part of parts) {
+            if (!part) continue;
+            currentPath = currentPath ? join(currentPath, part) : part;
+            try {
+              await ensureDir(currentPath);
+            } catch (e) {
+              console.error(`Failed to create directory ${currentPath}`);
+            }
+          }
+        }
 
-      tasks.push({
-        inputPath: entry.path,
-        outputPath: targetPath,
-        relativePath: sanitizedPath,
-        originalIndex: 0 // Will be updated during folder processing
-      });
+        tasks.push({
+          inputPath: entry.path,
+          outputPath: targetPath,
+          relativePath: sanitizedPath,
+          originalIndex: 0 // Will be updated during folder processing
+        });
 
-      if (SHOW_CONVERSION_LOGS) {
-        console.log(`Found file: ${entry.path}`);
-        console.log(`Will save to: ${targetPath}\n`);
+        if (SHOW_CONVERSION_LOGS) {
+          console.log(`Found file: ${entry.path}`);
+          console.log(`Will save to: ${targetPath}\n`);
+        }
+      } catch (error: unknown) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        console.error(`Error processing file path ${entry.path}: ${errorMessage}`);
+        // Continue with next file instead of stopping
       }
     }
   }
@@ -78,7 +108,8 @@ export async function convertToAvif(sourceDir: string): Promise<void> {
   }
 
   console.log(`Found ${tasks.length} files to process across ${new Set(tasks.map(t => dirname(t.inputPath))).size} folders.`);
-  console.log(`Using ${MAX_CONCURRENT_TASKS} concurrent tasks per folder.`);
+  console.log(`Processing up to ${MAX_CONCURRENT_WORKERS} folders concurrently.`);
+  console.log(`Each folder will process files sequentially with one dedicated worker.`);
   console.log("Converting files to AVIF format...\n");
 
   // Create a global progress tracker for all files
@@ -100,7 +131,7 @@ export async function convertToAvif(sourceDir: string): Promise<void> {
   console.log(`Successfully converted: ${result.successCount}`);
   console.log(`Skipped (already exist): ${result.skippedCount}`);
   console.log(`Failed conversions: ${result.errorCount}`);
-  console.log(`Concurrent tasks per folder: ${MAX_CONCURRENT_TASKS}`);
+  console.log(`Concurrent workers: ${MAX_CONCURRENT_WORKERS}`);
   
   if (result.errorCount > 0) {
     console.log(`See error.txt for error details`);
@@ -109,7 +140,12 @@ export async function convertToAvif(sourceDir: string): Promise<void> {
   console.log(`Processing rate: ${(result.successCount / (result.totalTime / 1000)).toFixed(2)} files/second`);
   
   // Kiểm tra sự hoàn chỉnh giữa thư mục gốc và thư mục đích
-  await checkDirectoryCompletion(sourceDir, targetDir);
+  try {
+    await checkDirectoryCompletion(sourceDir, targetDir);
+  } catch (error: unknown) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    console.error(`Error during directory completion check: ${errorMessage}`);
+  }
   
   // Clean up temporary directory
   try {

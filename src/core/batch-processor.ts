@@ -1,9 +1,10 @@
 import { dirname } from "https://deno.land/std/path/mod.ts";
 import { ConversionTask, FolderConversionTask, ProgressInfo } from "../interfaces/types.ts";
-import { processFilesInFolder, retryFailedFiles, checkFolderCompletion } from "./folder-processor.ts";
+import { MAX_CONCURRENT_WORKERS } from "../utils/constants.ts";
 import { showProgress } from "../utils/helpers.ts";
+import { checkFolderCompletion, processFilesInFolder, retryFailedFiles } from "./folder-processor.ts";
 
-// Process files sequentially by folder with multi-threading within folders
+// Process folders in parallel, with sequential processing of files within each folder
 export async function processFilesByFolder(
   tasks: ConversionTask[], 
   sourceDir: string, 
@@ -26,6 +27,7 @@ export async function processFilesByFolder(
   }
   
   console.log(`Grouped files into ${folderMap.size} folders for processing`);
+  console.log(`Processing up to ${MAX_CONCURRENT_WORKERS} folders concurrently (one worker per folder)`);
   
   // Create ordered folder tasks
   const folderTasks: FolderConversionTask[] = Array.from(folderMap.entries())
@@ -36,34 +38,30 @@ export async function processFilesByFolder(
       completed: false
     }));
   
-  // Process each folder sequentially
   let successCount = 0;
   let errorCount = 0;
   let skippedCount = 0;
   const startTime = Date.now();
   
-  for (let i = 0; i < folderTasks.length; i++) {
-    const folderTask = folderTasks[i];
-    console.log(`\n[${i + 1}/${folderTasks.length}] Processing folder: ${folderTask.folderPath}`);
+  // Function to process a single folder
+  async function processSingleFolder(folderTask: FolderConversionTask, folderIndex: number): Promise<{
+    successCount: number;
+    errorCount: number;
+    skippedCount: number;
+  }> {
+    console.log(`\n[${folderIndex + 1}/${folderTasks.length}] Worker processing folder: ${folderTask.folderPath}`);
     console.log(`Found ${folderTask.files.length} files to process in this folder`);
     
-    // Display total progress before processing this folder
-    await showProgress(globalProgress);
-    
-    // Process files within folder in parallel
+    // Process files within folder sequentially
     const result = await processFilesInFolder(folderTask, globalProgress);
-    
-    successCount += result.successCount;
-    errorCount += result.errorCount;
-    skippedCount += result.skippedCount;
     
     // Try to fix errors if any
     if (result.errorCount > 0) {
       console.log(`\nRetrying ${folderTask.errorFiles.length} failed files in folder: ${folderTask.folderPath}`);
       const retryResult = await retryFailedFiles(folderTask, globalProgress);
       
-      successCount += retryResult.successCount;
-      errorCount -= retryResult.successCount; // Reduce error count for successful retries
+      result.successCount += retryResult.successCount;
+      result.errorCount -= retryResult.successCount; // Reduce error count for successful retries
       
       if (retryResult.successCount > 0) {
         console.log(`Successfully converted ${retryResult.successCount} files on retry`);
@@ -80,16 +78,71 @@ export async function processFilesByFolder(
     // Mark folder as completed
     folderTask.completed = true;
     
-    // Show progress after this folder is done
-    await showProgress(globalProgress);
+    return result;
   }
   
-  const totalTime = Date.now() - startTime;
+  // Create a queue of folders to process
+  const folderQueue = [...folderTasks];
   
-  return {
-    successCount,
-    errorCount,
-    skippedCount,
-    totalTime
-  };
+  // Create a worker pool to process folders
+  let activeWorkers = 0;
+  let nextFolderIndex = 0;
+  
+  // Use a promise to wait for all folders to be processed
+  return await new Promise((resolve) => {
+    // Function to process the next available folder
+    function processNextFolder() {
+      if (folderQueue.length === 0) {
+        // If there are no more folders and no active workers, we're done
+        if (activeWorkers === 0) {
+          const totalTime = Date.now() - startTime;
+          resolve({
+            successCount,
+            errorCount,
+            skippedCount,
+            totalTime
+          });
+        }
+        return;
+      }
+      
+      // Get the next folder from the queue
+      const nextFolder = folderQueue.shift()!;
+      
+      // Increment active workers count
+      activeWorkers++;
+      
+      // Process the folder
+      processSingleFolder(nextFolder, nextFolderIndex++)
+        .then((result) => {
+          // Update counts
+          successCount += result.successCount;
+          errorCount += result.errorCount;
+          skippedCount += result.skippedCount;
+          
+          // Update progress
+          showProgress(globalProgress).catch(console.error);
+          
+          // Decrement active workers count
+          activeWorkers--;
+          
+          // Process the next folder
+          processNextFolder();
+        })
+        .catch((error) => {
+          console.error(`Error processing folder ${nextFolder.folderPath}:`, error);
+          
+          // Decrement active workers count
+          activeWorkers--;
+          
+          // Continue with next folder despite error
+          processNextFolder();
+        });
+    }
+    
+    // Start processing folders with up to MAX_CONCURRENT_WORKERS workers
+    for (let i = 0; i < Math.min(MAX_CONCURRENT_WORKERS, folderTasks.length); i++) {
+      processNextFolder();
+    }
+  });
 }

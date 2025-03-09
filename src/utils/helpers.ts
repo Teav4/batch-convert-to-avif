@@ -1,16 +1,14 @@
-import { join, dirname, basename, extname, relative } from "https://deno.land/std/path/mod.ts";
-import { format } from "https://deno.land/std/datetime/mod.ts";
 import { FileError, RenameError } from "../interfaces/types.ts";
-import { ERROR_LOG_FILE, RENAME_ERROR_LOG_FILE, DATE_FORMAT } from "./constants.ts";
+import { ERROR_LOG_FILE, RENAME_ERROR_LOG_FILE } from "./constants.ts";
 
 // Generate random ID for temporary files
 export function generateRandomId(): string {
   return crypto.randomUUID().replace(/-/g, '');
 }
 
-// Sanitize path by removing special characters
+// Sanitize path by replacing special characters with underscore
 export function sanitizePath(path: string): string {
-  return path.replace(/[<>:"\/\\|?*()[\]{}]/g, " ")
+  return path.replace(/[<>:"\/\\|?*()[\]{}]/g, "_")
             .replace(/\s+/g, " ")
             .trim();
 }
@@ -25,12 +23,6 @@ export async function writeErrorLog(error: FileError): Promise<void> {
 export async function writeRenameErrorLog(error: RenameError): Promise<void> {
   const logEntry = `${error.timestamp} - Error renaming from '${error.oldPath}' to '${error.newPath}': ${error.error}\n`;
   await Deno.writeTextFile(RENAME_ERROR_LOG_FILE, logEntry, { append: true });
-}
-
-// Get the first level folder from a file path
-export function getFirstLevelFolder(filePath: string, basePath: string): string {
-  const relativePath = relative(basePath, filePath);
-  return relativePath.split(/[\/\\]/)[0];
 }
 
 // Format duration from milliseconds to HH:MM:SS
@@ -65,7 +57,7 @@ export async function showProgress(info: { current: number; total: number; start
   const currentTime = new Date().toISOString().replace('T', ' ').split('.')[0];
   const statusLine = 
     `\r${progressBar} ${current}/${total} (${percentComplete}%) - ${rateStr} files/sec - ` +
-    `Elapsed: ${elapsedTime} - Remaining: ${remainingTime} - Tasks: ${(await import("./constants.ts")).MAX_CONCURRENT_TASKS}\n` +
+    `Elapsed: ${elapsedTime} - Remaining: ${remainingTime} - Workers: ${(await import("./constants.ts")).MAX_CONCURRENT_WORKERS}\n` +
     `Current time: ${currentTime}`;
   
   console.log("\r" + " ".repeat(width));
@@ -77,11 +69,4 @@ export async function ensureTempDir(): Promise<void> {
   const { ensureDir } = await import("https://deno.land/std/fs/mod.ts");
   const { TEMP_DIR } = await import("./constants.ts");
   await ensureDir(TEMP_DIR);
-}
-
-// Get a temporary file path with random ID
-export async function getTempFilePath(extension: string = ".tmp"): Promise<string> {
-  const { join } = await import("https://deno.land/std/path/mod.ts");
-  const { TEMP_DIR } = await import("./constants.ts");
-  return join(TEMP_DIR, `temp_${generateRandomId()}${extension}`);
 }
