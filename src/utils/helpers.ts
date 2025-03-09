@@ -8,8 +8,8 @@ export function generateRandomId(): string {
 
 // Sanitize path by replacing special characters with underscore
 export function sanitizePath(path: string): string {
-  return path.replace(/[<>:"\/\\|?*()[\]{}]/g, "_")
-            .replace(/\s+/g, " ")
+  return path.replace(/[<>:"\/\\|?*()[\]{},;!@#$%^&+=~`]/g, "_")
+            .replace(/\s+/g, "_")
             .trim();
 }
 
