@@ -23,7 +23,10 @@ export async function processFilesByFolder(
     if (!folderMap.has(folderPath)) {
       folderMap.set(folderPath, []);
     }
-    folderMap.get(folderPath)!.push(task);
+    const folderTasks = folderMap.get(folderPath);
+    if (folderTasks) {
+      folderTasks.push(task);
+    }
   }
   
   console.log(`Grouped files into ${folderMap.size} folders for processing`);
@@ -89,9 +92,14 @@ export async function processFilesByFolder(
   let nextFolderIndex = 0;
   
   // Use a promise to wait for all folders to be processed
-  return await new Promise((resolve) => {
+  return await new Promise<{
+    successCount: number;
+    errorCount: number;
+    skippedCount: number;
+    totalTime: number;
+  }>((resolve) => {
     // Function to process the next available folder
-    function processNextFolder() {
+    function processNextFolder(): void {
       if (folderQueue.length === 0) {
         // If there are no more folders and no active workers, we're done
         if (activeWorkers === 0) {
@@ -107,7 +115,8 @@ export async function processFilesByFolder(
       }
       
       // Get the next folder from the queue
-      const nextFolder = folderQueue.shift()!;
+      const nextFolder = folderQueue.shift();
+      if (!nextFolder) return;
       
       // Increment active workers count
       activeWorkers++;
@@ -121,7 +130,9 @@ export async function processFilesByFolder(
           skippedCount += result.skippedCount;
           
           // Update progress
-          showProgress(globalProgress).catch(console.error);
+          showProgress(globalProgress).catch((err) => {
+            console.error("Error showing progress:", err instanceof Error ? err.message : String(err));
+          });
           
           // Decrement active workers count
           activeWorkers--;
@@ -130,7 +141,7 @@ export async function processFilesByFolder(
           processNextFolder();
         })
         .catch((error) => {
-          console.error(`Error processing folder ${nextFolder.folderPath}:`, error);
+          console.error(`Error processing folder ${nextFolder.folderPath}:`, error instanceof Error ? error.message : String(error));
           
           // Decrement active workers count
           activeWorkers--;

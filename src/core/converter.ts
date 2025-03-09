@@ -21,7 +21,7 @@ async function copyToTemp(sourcePath: string, tempDir: string): Promise<string> 
     // Copy the original file to temp location with simple name
     await Deno.copyFile(sourcePath, tempFilePath);
     return tempFilePath;
-  } catch (error: unknown) {
+  } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     throw new Error(`Failed to create temp copy of file: ${errorMessage}`);
   }
@@ -143,8 +143,9 @@ Output: ${outputLog}
     
     // Clean up temp directory after successful move
     await Deno.remove(tempFolderPath, { recursive: true }).catch(() => {});
-  } catch (error: any) {
-    console.error(`Error moving file from ${tempAvifFilePath} to ${finalOutputPath}: ${error.message}`);
-    throw new Error(`Failed to move temporary file: ${error.message}`);
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    console.error(`Error moving file from ${tempAvifFilePath} to ${finalOutputPath}: ${errorMessage}`);
+    throw new Error(`Failed to move temporary file: ${errorMessage}`);
   }
 }

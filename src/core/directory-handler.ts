@@ -5,7 +5,6 @@ import {
   DirectoryMismatch
 } from "../interfaces/types.ts";
 import {
-  CHECK_ERRORS_LOG_FILE,
   DATE_FORMAT,
   SHOW_RENAME_LOGS,
   SUPPORTED_EXTENSIONS
@@ -25,7 +24,7 @@ export async function renameSpecialCharFolders(sourceDir: string): Promise<void>
         dirs.push(entry);
       }
     }
-  } catch (error: unknown) {
+  } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     console.error(`Error walking source directory tree: ${errorMessage}`);
     console.log("Will continue without complete folder renaming.");
@@ -67,7 +66,7 @@ export async function renameSpecialCharFolders(sourceDir: string): Promise<void>
       
       // If this sanitized name was already used in this directory, add a number suffix
       if (usedNames.has(dupKey)) {
-        const counter = usedNames.get(dupKey)! + 1;
+        const counter = (usedNames.get(dupKey) ?? 0) + 1;
         usedNames.set(dupKey, counter);
         sanitizedName = `${sanitizedName}_${counter}`;
       } else {
@@ -117,7 +116,7 @@ export async function renameSpecialCharFolders(sourceDir: string): Promise<void>
         await Deno.rename(entry.path, newPath);
         renamedPaths.add(entry.path);
         successCount++;
-      } catch (error: unknown) {
+      } catch (error) {
         errorCount++;
         const errorMessage = error instanceof Error ? error.message : String(error);
         console.error(`Error renaming directory ${entry.path}: ${errorMessage}`);
@@ -155,7 +154,7 @@ export async function renameSpecialCharFolders(sourceDir: string): Promise<void>
             newPath: alternateNewPath,
             error: `Original rename failed (${errorMessage}). Used numbered alternative.`
           });
-        } catch (altError: unknown) {
+        } catch (altError) {
           const altErrorMessage = altError instanceof Error ? altError.message : String(altError);
           console.error(`Alternate rename also failed: ${altErrorMessage}`);
           
@@ -222,7 +221,7 @@ export async function checkDirectoryCompletion(sourceDir: string, targetDir: str
       }
       
       successful = true;
-    } catch (error: unknown) {
+    } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       
       if (attempt < MAX_CHECK_RETRIES) {

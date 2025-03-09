@@ -65,7 +65,7 @@ export async function processFilesInFolder(
         await convertFile(task);
         successCount++;
       }
-    } catch (error: unknown) {
+    } catch (error) {
       errorCount++;
       folderTask.errorFiles.push(task); // Add to error files for retry
       
@@ -121,7 +121,7 @@ export async function retryFailedFiles(
         
         // We don't increment globalProgress.current here because the error files
         // were already counted in the progress when they failed
-      } catch (error: unknown) {
+      } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
         console.error(`Retry attempt ${attempt + 1} failed: ${errorMessage}`);
         
@@ -164,7 +164,7 @@ export async function checkFolderCompletion(folderTask: FolderConversionTask, so
         targetCount++;
       }
     }
-  } catch (error: unknown) {
+  } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     console.error(`Error reading target folder ${targetFolderPath}: ${errorMessage}`);
     return false;

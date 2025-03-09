@@ -1,6 +1,6 @@
 import { ensureDir } from "https://deno.land/std/fs/mod.ts";
 import { walk } from "https://deno.land/std/fs/walk.ts";
-import { basename, dirname, extname, join, relative } from "https://deno.land/std/path/mod.ts";
+import { dirname, extname, join, relative } from "https://deno.land/std/path/mod.ts";
 import { ConversionTask, ProgressInfo } from "../interfaces/types.ts";
 import {
   MAX_CONCURRENT_WORKERS,
@@ -27,7 +27,7 @@ export async function convertToAvif(sourceDir: string): Promise<void> {
       console.error("Error: Source path is not a directory");
       Deno.exit(1);
     }
-  } catch {
+  } catch (_error) {
     console.error("Error: Source directory does not exist");
     Deno.exit(1);
   }
@@ -36,7 +36,7 @@ export async function convertToAvif(sourceDir: string): Promise<void> {
   try {
     await renameSpecialCharFolders(sourceDir);
     console.log("Folder renaming completed.\n");
-  } catch (error: unknown) {
+  } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     console.error(`Error during folder renaming process: ${errorMessage}`);
     console.log("Continuing with conversion regardless of renaming errors.\n");
@@ -64,7 +64,7 @@ export async function convertToAvif(sourceDir: string): Promise<void> {
         // Ensure target directory exists
         try {
           await ensureDir(targetPath);
-        } catch (err: unknown) {
+        } catch (err) {
           const dirError = err instanceof Error ? err.message : String(err);
           console.error(`Error creating directory ${targetPath}: ${dirError}`);
           console.log(`Attempting alternative approach for ${targetPath}...`);
@@ -77,7 +77,7 @@ export async function convertToAvif(sourceDir: string): Promise<void> {
             currentPath = currentPath ? join(currentPath, part) : part;
             try {
               await ensureDir(currentPath);
-            } catch (e) {
+            } catch (_e) {
               console.error(`Failed to create directory ${currentPath}`);
             }
           }
@@ -94,7 +94,7 @@ export async function convertToAvif(sourceDir: string): Promise<void> {
           console.log(`Found file: ${entry.path}`);
           console.log(`Will save to: ${targetPath}\n`);
         }
-      } catch (error: unknown) {
+      } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
         console.error(`Error processing file path ${entry.path}: ${errorMessage}`);
         // Continue with next file instead of stopping
@@ -142,7 +142,7 @@ export async function convertToAvif(sourceDir: string): Promise<void> {
   // Kiểm tra sự hoàn chỉnh giữa thư mục gốc và thư mục đích
   try {
     await checkDirectoryCompletion(sourceDir, targetDir);
-  } catch (error: unknown) {
+  } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     console.error(`Error during directory completion check: ${errorMessage}`);
   }
@@ -156,7 +156,7 @@ export async function convertToAvif(sourceDir: string): Promise<void> {
       }
     }
     console.log("Cleanup completed.");
-  } catch (error: unknown) {
+  } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     console.error(`Error cleaning up temporary files: ${errorMessage}`);
   }
