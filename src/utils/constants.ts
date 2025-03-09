@@ -10,7 +10,7 @@ export const SKIP_EXISTING_FILES = true;         // Bỏ qua file đã tồn t�
 export const DATE_FORMAT = "yyyy-MM-dd HH:mm:ss";
 export const TEMP_DIR = "temp";                  // Thư mục lưu file tạm thời
 export let MAX_CONCURRENT_WORKERS = navigator.hardwareConcurrency || 4; // Số folder xử lý song song (mỗi worker 1 folder)
-export let MAX_RETRY_COUNT = 3;                  // Số lần thử lại tối đa cho các file lỗi
+export const MAX_RETRY_COUNT = 3;                  // Số lần thử lại tối đa cho các file lỗi
 
 // Update concurrent workers setting
 export function setMaxConcurrentWorkers(value: number): void {
